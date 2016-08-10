@@ -1,0 +1,13 @@
+AUTHORS
+ChangeLog
+doctrees
+man
+.tox
+.venv
+*.egg*
+*.swp
+*.swo
+*.pyc
+.testrepository
+.idea/*
+*~
