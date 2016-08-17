@@ -1,1 +1,1 @@
-Search.setIndex({objtypes:{},objnames:{},titles:["https://gotostack.github.io/"],envversion:42,objects:{},titleterms:{openstack:0,tabl:0,indic:0,gotostack:0,github:0,http:0},terms:{search:0,page:0},filenames:["index"]})
+Search.setIndex({envversion:42,objtypes:{},objects:{},titles:["https://gotostack.github.io/"],objnames:{},filenames:["index"],terms:{search:0,page:0},titleterms:{indic:0,openstack:0,github:0,gotostack:0,http:0,tabl:0}})
