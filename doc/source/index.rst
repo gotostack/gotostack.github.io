@@ -1,11 +1,16 @@
 .. gotostack.github.io master file
 
-==============================
-https://gotostack.github.io/
-==============================
+=====
+Blogs
+=====
 
-OpenStack
-=========
+This is the index page.
+
+Enjoy!
+
+
+Cloud
+=====
 
 .. toctree::
    :glob:
