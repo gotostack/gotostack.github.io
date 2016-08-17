@@ -9,8 +9,8 @@ This is the index page.
 Enjoy!
 
 
-Cloud
-=====
+Cloud Computing
+===============
 
 .. toctree::
    :glob:
@@ -18,8 +18,36 @@ Cloud
 
    pages/Cloud/*
 
-==================
-Indices and tables
-==================
+
+Linux
+=====
+
+.. toctree::
+   :glob:
+   :maxdepth: 1
+
+   pages/Linux/*
+
+
+Network
+=======
+
+.. toctree::
+   :glob:
+   :maxdepth: 1
+
+   pages/Network/*
+
+
+========
+About Me
+========
+
+.. toctree::
+   :glob:
+   :maxdepth: 1
+
+   pages/AboutMe/*
+
 
 * :ref:`search`

@@ -3,7 +3,7 @@ body {
 }
 
 #header {
-  width: 950px;
+  width: 1000px;
   margin: 0 auto;
   height: 102px;
 }
@@ -86,10 +86,12 @@ a.headerlink {
 div.body {
   margin-top: -25px;
   margin-left: 260px;
+  min-height: 900px;
 }
 
 div.document {
-  width: 960px;
+  width: 1024px;
+  min-height: 900px;
   margin: 0 auto;
 }
 

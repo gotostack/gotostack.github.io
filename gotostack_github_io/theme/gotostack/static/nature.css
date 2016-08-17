@@ -25,6 +25,7 @@ body {
 div.documentwrapper {
     float: left;
     width: 100%;
+    min-height: 900px;
 }
 
 div.bodywrapper {
