@@ -11,7 +11,7 @@ OpenStack
    :glob:
    :maxdepth: 1
 
-   pages/OpenStack/*
+   pages/Cloud/*
 
 ==================
 Indices and tables

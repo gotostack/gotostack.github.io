@@ -120,7 +120,7 @@ html_theme = 'nature'
 
 # The name for this set of Sphinx documents.  If None, it defaults to
 # "<project> v<release> documentation".
-#html_title = None
+html_title = "LIU Yulong\'s Cloud Blog"
 
 # A shorter title for the navigation bar.  Default is the same as html_title.
 #html_short_title = None
@@ -246,9 +246,9 @@ texinfo_documents = [
 # -- Options for Epub output ---------------------------------------------------
 
 # Bibliographic Dublin Core info.
-epub_title = u'gotostack.github.io'
-epub_author = u'gotostack.github.io'
-epub_publisher = u'gotostack.github.io'
+epub_title = u'LIU Yulong\'s Cloud Blog'
+epub_author = u'LIU Yulong'
+epub_publisher = u'LIU Yulong'
 epub_copyright = u'2014, gotostack.github.io'
 
 # The language of the text. It defaults to the language option
