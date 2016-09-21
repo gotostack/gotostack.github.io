@@ -1,0 +1,538 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>Layer 3 IPs rate limit &mdash; LIU Yulong&#39;s Cloud Blog</title>
+    
+    <link rel="stylesheet" href="../../static/nature.css" type="text/css" />
+    <link rel="stylesheet" href="../../static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="../../static/tweaks.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.0.1.dev9',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../static/jquery.js"></script>
+    <script type="text/javascript" src="../../static/underscore.js"></script>
+    <script type="text/javascript" src="../../static/doctools.js"></script>
+    <link rel="top" title="LIU Yulong&#39;s Cloud Blog" href="../../index.html" />
+    <link rel="next" title="What is OpenStack" href="openstack.html" />
+    <link rel="prev" title="Blogs" href="../../index.html" /> 
+  </head>
+  <body>
+  <div id="header">
+    <h1 id="logo"><a href="https://gotostack.github.io/">Cloud Computing</a></h1>
+    <ul id="navigation">
+      
+      <li><a href="https://gotostack.github.io/" title="Home page" class="link">Home</a></li>
+      <li><a href="https://gotostack.github.io/doc/html/" title="Cloud Computing">Cloud Computing</a></li>
+      
+    </ul>
+  </div>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body">
+            
+  <div class="section" id="layer-3-ips-rate-limit">
+<h1>Layer 3 IPs rate limit<a class="headerlink" href="#layer-3-ips-rate-limit" title="Permalink to this headline">¶</a></h1>
+<p>blueprint: <a class="reference external" href="https://blueprints.launchpad.net/neutron/+spec/layer-3-rate-limit">https://blueprints.launchpad.net/neutron/+spec/layer-3-rate-limit</a></p>
+<p>RFE: <a class="reference external" href="https://bugs.launchpad.net/neutron/+bug/1596611">https://bugs.launchpad.net/neutron/+bug/1596611</a></p>
+<p>Flyer 3 IP bandwidth is unrestricted now. But the NIC and the DC export of
+data center may have a limitation for a cloud deployment. Then layer 3 IPs
+rate limit is needed.</p>
+<p>This spec describes how to add a buld-in extension to limit the layer 3 IPs
+bandwidth.</p>
+<div class="section" id="problem-description">
+<h2>Problem Description<a class="headerlink" href="#problem-description" title="Permalink to this headline">¶</a></h2>
+<p>Neutron now has layer 3 IPs: floating IP and router gateway IP, which bandwidth
+is not restricted, then here are several reasons for adding rate limit to layer
+3 IPs:</p>
+<ul class="simple">
+<li>(a) Currently, neutron qos implementation only affects neutron ports, more
+detail is that the bandwidth restriction is based on the OVS port, so all
+the VM traffic will be limited under that restriction, including l3 traffic.</li>
+<li><ol class="first loweralpha" start="2">
+<li>North/South traffic always rely on infrastructure networking capacity.</li>
+</ol>
+</li>
+<li>(c) Floating IP traffic, Cloud deployment does not have such bandwidth to meet
+the total bandwith requirement of all tenants at same time, then the SLA of
+user networing traffic cloud not guarantee. For instance, base on (a), So if
+give VM NICs a high qos value, the export of DC will get busy, one day with
+the increased floating IP, it will not meet demand. If a lower value, the
+Ease/West traffic may not happy.</li>
+<li>(d) SNAT traffic in centralized network node will not meet the needs of all
+tenant bandwidth. A network node NIC has one limit bandwidth.</li>
+</ul>
+</div>
+<div class="section" id="proposed-change">
+<h2>Proposed Change<a class="headerlink" href="#proposed-change" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="overview">
+<h3>Overview<a class="headerlink" href="#overview" title="Permalink to this headline">¶</a></h3>
+<p>We want to limit the bandwith of floating IP and router gateway (SNAT traffic).
+At the same time, the ease/west traffic should have no affect.</p>
+<p>In order to make the implementation simple and efficient, we need to make the
+following agreement:</p>
+<ul class="simple">
+<li>The minimum unit of the floating rate/bandwidth is Mbps, aka a floating IP
+will have a minimum bandwidth 1Mbps.</li>
+<li>The ingress and egress traffic will have a equal bandwidth value.</li>
+<li>A value of 0 will be avaliable only for admin users, then it implicitly means
+not to limit a floating IP traffic.</li>
+</ul>
+<p>How the change works:</p>
+<ul class="simple">
+<li>Linux TC(Traffic Control) <a class="footnote-reference" href="#id3" id="id1">[1]</a> will be used to implement such functionality.
+And for egress traffic a HTB <a class="footnote-reference" href="#id4" id="id2">[2]</a> tc filter will be used to limit the floating
+IP outgoing bandwidth.</li>
+</ul>
+<p>Where to install the TC rules:</p>
+<ul class="simple">
+<li>For HA/legacy routers, rules will be installed into network node qouter
+namespace, and the traffice control device is qg-device.</li>
+<li>For DVR routers, it&#8217;s compute node qouter namespace, but the traffice control
+device is rfp-device (one of qrouter-namespace to fip-namespace pair).</li>
+</ul>
+</div>
+<div class="section" id="solution-proposed">
+<h3>Solution Proposed<a class="headerlink" href="#solution-proposed" title="Permalink to this headline">¶</a></h3>
+<div class="section" id="floating-ip">
+<h4>Floating IP<a class="headerlink" href="#floating-ip" title="Permalink to this headline">¶</a></h4>
+<ul class="simple">
+<li><ol class="first arabic">
+<li>User create a floating IP with <tt class="docutils literal"><span class="pre">rate_limit</span></tt>.</li>
+</ol>
+</li>
+<li><ol class="first arabic" start="2">
+<li>Floating IP is binded to a port.</li>
+</ol>
+</li>
+<li><ol class="first arabic" start="3">
+<li>L3 agent process the router and it&#8217;s floating IPs.</li>
+</ol>
+</li>
+<li><ol class="first arabic" start="4">
+<li>L3 agent set the TC rules to the qrouter-namespace relevant device.</li>
+</ol>
+</li>
+</ul>
+<p>After this the floating IP is under a bandwidth restriction. Proposed CLI:</p>
+<div class="highlight-python"><div class="highlight"><pre><span></span>$ neutron floatingip-create --rate-limit 10 public
+Created a new floatingip:
++---------------------+--------------------------------------+
+| Field               | Value                                |
++---------------------+--------------------------------------+
+| description         |                                      |
+| dns_domain          |                                      |
+| dns_name            |                                      |
+| fixed_ip_address    |                                      |
+| floating_ip_address | 172.16.6.171                         |
+| floating_network_id | 2cad629d-e523-4b83-90b9-c0cc0ba1250d |
+| id                  | 87a6bd65-dca8-4520-97ed-f82d05c0a57f |
+| name                |                                      |
+| port_id             |                                      |
+| rate_limit          | 10                                   |
+| router_id           |                                      |
+| status              | DOWN                                 |
+| tenant_id           | 5ff1da9c235c4ebcaefeecf3fff7eb11     |
++---------------------+--------------------------------------+
+
+$ neutron port-create 9826c8f0-3269-4546-a333-49d31046edcd
+Created a new port:
++-----------------------+---------------------------------------------------------------------------------------+
+| Field                 | Value                                                                                 |
++-----------------------+---------------------------------------------------------------------------------------+
+| admin_state_up        | True                                                                                  |
+| allowed_address_pairs |                                                                                       |
+| binding:host_id       |                                                                                       |
+| binding:profile       | {}                                                                                    |
+| binding:vif_details   | {}                                                                                    |
+| binding:vif_type      | unbound                                                                               |
+| binding:vnic_type     | normal                                                                                |
+| created_at            | 2016-09-21T05:13:16                                                                   |
+| description           |                                                                                       |
+| device_id             |                                                                                       |
+| device_owner          |                                                                                       |
+| dns_name              |                                                                                       |
+| extra_dhcp_opts       |                                                                                       |
+| fixed_ips             | {&quot;subnet_id&quot;: &quot;b7006a22-0f6e-4911-a6bc-156bcd7e8a7f&quot;, &quot;ip_address&quot;: &quot;192.168.199.24&quot;} |
+| id                    | 4b79988f-ede4-478a-88e5-2443cac203dc                                                  |
+| mac_address           | fa:16:3e:41:20:a8                                                                     |
+| name                  |                                                                                       |
+| network_id            | 9826c8f0-3269-4546-a333-49d31046edcd                                                  |
+| port_security_enabled | True                                                                                  |
+| security_groups       | d3ebbd92-c127-4a7f-b9e9-15fb92c5b781                                                  |
+| status                | DOWN                                                                                  |
+| tenant_id             | 5ff1da9c235c4ebcaefeecf3fff7eb11                                                      |
+| updated_at            | 2016-09-21T05:13:16                                                                   |
++-----------------------+---------------------------------------------------------------------------------------+
+
+$ neutron floatingip-associate 87a6bd65-dca8-4520-97ed-f82d05c0a57f 4b79988f-ede4-478a-88e5-2443cac203dc
+Associated floating IP 87a6bd65-dca8-4520-97ed-f82d05c0a57f
+</pre></div>
+</div>
+</div>
+<div class="section" id="router-gateway-ip">
+<h4>Router Gateway IP<a class="headerlink" href="#router-gateway-ip" title="Permalink to this headline">¶</a></h4>
+<ul class="simple">
+<li><ol class="first arabic">
+<li>Create router gateway with the <tt class="docutils literal"><span class="pre">rate_limit</span></tt> attibutes.</li>
+</ol>
+</li>
+<li><ol class="first arabic" start="2">
+<li>L3 agent process the router and it&#8217;s gateway IPs.</li>
+</ol>
+</li>
+<li><ol class="first arabic" start="3">
+<li>L3 agent set the TC rules to the qrouter-namespace(snat ns) relevant device.</li>
+</ol>
+</li>
+</ul>
+<p>After this the router gateway (SNAT traffic) is under a bandwidth restriction.
+Proposed CLI:</p>
+<div class="highlight-python"><div class="highlight"><pre><span></span>$ neutron router-create test
+Created a new router:
++-------------------------+--------------------------------------+
+| Field                   | Value                                |
++-------------------------+--------------------------------------+
+| admin_state_up          | True                                 |
+| availability_zone_hints |                                      |
+| availability_zones      |                                      |
+| description             |                                      |
+| distributed             | True                                 |
+| external_gateway_info   |                                      |
+| ha                      | True                                 |
+| id                      | 3d13b85b-e999-49e3-a336-6d549253d651 |
+| name                    | test                                 |
+| routes                  |                                      |
+| status                  | ACTIVE                               |
+| tenant_id               | 5ff1da9c235c4ebcaefeecf3fff7eb11     |
++-------------------------+--------------------------------------+
+
+$ neutron router-gateway-set --rate-limit 10 3d13b85b-e999-49e3-a336-6d549253d651 public
+Set gateway for router 3d13b85b-e999-49e3-a336-6d549253d651
+
+$ neutron router-show 3d13b85b-e999-49e3-a336-6d549253d651
++-------------------------+------------------------------------------------------------------------------+
+| Field                   | Value                                                                        |
++-------------------------+------------------------------------------------------------------------------+
+| admin_state_up          | True                                                                         |
+| availability_zone_hints |                                                                              |
+| availability_zones      | zone-2                                                                       |
+|                         | zone-1                                                                       |
+| description             |                                                                              |
+| distributed             | True                                                                         |
+| external_gateway_info   | {&quot;network_id&quot;: &quot;2cad629d-e523-4b83-90b9-c0cc0ba1250d&quot;, &quot;enable_snat&quot;: true,  |
+|                         | &quot;rate_limit&quot;: 10, &quot;external_fixed_ips&quot;: [{&quot;subnet_id&quot;:                       |
+|                         | &quot;2a76489a-3717-44a5-8218-e0d20182ec2f&quot;, &quot;ip_address&quot;: &quot;172.16.6.172&quot;}]}      |
+| ha                      | True                                                                         |
+| id                      | 3d13b85b-e999-49e3-a336-6d549253d651                                         |
+| name                    | test                                                                         |
+| routes                  |                                                                              |
+| status                  | ACTIVE                                                                       |
+| tenant_id               | 5ff1da9c235c4ebcaefeecf3fff7eb11                                             |
++-------------------------+------------------------------------------------------------------------------+
+</pre></div>
+</div>
+</div>
+</div>
+<div class="section" id="example-l3-agent-side-tc-rules">
+<h3>Example L3 agent side TC rules<a class="headerlink" href="#example-l3-agent-side-tc-rules" title="Permalink to this headline">¶</a></h3>
+<p>Assuming that we have a legacy router: cf6951cb-b050-4543-9742-c63a4989edae,
+gateway ip: 172.16.6.167, 1Mbps, floating IP: 172.16.10.69, 1Mbps, then in
+its scheduled network node you can get the flollowing rules:</p>
+<div class="highlight-python"><div class="highlight"><pre><span></span>[root@network2 ~]# ip netns exec qrouter-cf6951cb-b050-4543-9742-c63a4989edae ip a
+1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host
+       valid_lft forever preferred_lft forever
+140: qr-4aba9b05-36: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1450 qdisc noqueue state UNKNOWN
+    link/ether fa:16:3e:24:37:7c brd ff:ff:ff:ff:ff:ff
+    inet 192.168.233.1/24 brd 192.168.233.255 scope global qr-4aba9b05-36
+       valid_lft forever preferred_lft forever
+    inet6 fe80::f816:3eff:fe24:377c/64 scope link
+       valid_lft forever preferred_lft forever
+141: qr-aef0d42d-f9: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1450 qdisc noqueue state UNKNOWN
+    link/ether fa:16:3e:4d:93:52 brd ff:ff:ff:ff:ff:ff
+    inet 192.168.232.1/24 brd 192.168.232.255 scope global qr-aef0d42d-f9
+       valid_lft forever preferred_lft forever
+    inet6 fe80::f816:3eff:fe4d:9352/64 scope link
+       valid_lft forever preferred_lft forever
+143: qg-c99a5832-7f: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc htb state UNKNOWN
+    link/ether fa:16:3e:f1:2b:41 brd ff:ff:ff:ff:ff:ff
+    inet 172.16.6.167/16 brd 172.16.255.255 scope global qg-c99a5832-7f
+       valid_lft forever preferred_lft forever
+    inet 172.16.10.69/32 brd 172.16.10.69 scope global qg-c99a5832-7f
+       valid_lft forever preferred_lft forever
+    inet6 fe80::f816:3eff:fef1:2b41/64 scope link
+       valid_lft forever preferred_lft forever
+
+[root@network2 ~]# ip netns exec qrouter-cf6951cb-b050-4543-9742-c63a4989edae tc qdisc show dev qg-c99a5832-7f
+qdisc htb 801b: root refcnt 2 r2q 10 default 0 direct_packets_stat 400
+qdisc ingress ffff: parent ffff:fff1 ----------------
+
+[root@network2 ~]# ip netns exec qrouter-cf6951cb-b050-4543-9742-c63a4989edae tc -s -d -p filter show dev qg-c99a5832-7f parent 801b:
+filter protocol ip pref 1 u32
+filter protocol ip pref 1 u32 fh 800: ht divisor 1
+filter protocol ip pref 1 u32 fh 800::800 order 2048 key ht 800 bkt 0 flowid :1  (rule hit 0 success 0)
+  match IP src 172.16.6.167/32 (success 0 )
+ police 0xa74 rate 1000Kbit burst 1Mb mtu 64Kb action drop overhead 0b
+ref 1 bind 1
+
+ Sent 0 bytes 0 pkts (dropped 0, overlimits 0)
+filter protocol ip pref 1 u32 fh 800::801 order 2049 key ht 800 bkt 0 flowid :1  (rule hit 0 success 0)
+  match IP src 172.16.10.69/32 (success 0 )
+ police 0xa76 rate 1000Kbit burst 1Mb mtu 64Kb action drop overhead 0b
+ref 1 bind 1
+
+ Sent 0 bytes 0 pkts (dropped 0, overlimits 0)
+
+[root@network2 ~]# ip netns exec qrouter-cf6951cb-b050-4543-9742-c63a4989edae tc -s -d -p filter show dev qg-c99a5832-7f parent ffff:
+filter protocol ip pref 1 u32
+filter protocol ip pref 1 u32 fh 800: ht divisor 1
+filter protocol ip pref 1 u32 fh 800::800 order 2048 key ht 800 bkt 0 flowid :1  (rule hit 0 success 0)
+  match IP dst 172.16.6.167/32 (success 0 )
+ police 0xa73 rate 1000Kbit burst 1Mb mtu 64Kb action drop overhead 0b
+ref 1 bind 1
+
+ Sent 0 bytes 0 pkts (dropped 0, overlimits 0)
+filter protocol ip pref 1 u32 fh 800::801 order 2049 key ht 800 bkt 0 flowid :1  (rule hit 0 success 0)
+  match IP dst 172.16.10.69/32 (success 0 )
+ police 0xa75 rate 1000Kbit burst 1Mb mtu 64Kb action drop overhead 0b
+ref 1 bind 1
+
+ Sent 0 bytes 0 pkts (dropped 0, overlimits 0)
+</pre></div>
+</div>
+<p>And DVR router 0580788c-c919-447c-aea1-87d415aa173a with floating IP
+172.16.6.161 1Mbps in a compute node:</p>
+<div class="highlight-python"><div class="highlight"><pre><span></span>[root@compute2 ~]# ip netns exec qrouter-0580788c-c919-447c-aea1-87d415aa173a ip a
+1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host
+       valid_lft forever preferred_lft forever
+24: rfp-0580788c-c: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc htb state UP qlen 1000
+    link/ether 3e:e6:97:2e:66:c3 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+    inet 169.254.106.114/31 scope global rfp-0580788c-c
+       valid_lft forever preferred_lft forever
+    inet 172.16.6.161/32 brd 172.16.6.161 scope global rfp-0580788c-c
+       valid_lft forever preferred_lft forever
+    inet6 fe80::3ce6:97ff:fe2e:66c3/64 scope link
+       valid_lft forever preferred_lft forever
+102: qr-43185e93-af: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1450 qdisc noqueue state UNKNOWN
+    link/ether fa:16:3e:95:ba:81 brd ff:ff:ff:ff:ff:ff
+    inet 192.168.199.1/24 brd 192.168.199.255 scope global qr-43185e93-af
+       valid_lft forever preferred_lft forever
+    inet6 fe80::f816:3eff:fe95:ba81/64 scope link
+       valid_lft forever preferred_lft forever
+104: qr-51635a61-46: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1450 qdisc noqueue state UNKNOWN
+    link/ether fa:16:3e:ed:b1:5b brd ff:ff:ff:ff:ff:ff
+    inet 192.168.198.1/24 brd 192.168.198.255 scope global qr-51635a61-46
+       valid_lft forever preferred_lft forever
+    inet6 fe80::f816:3eff:feed:b15b/64 scope link
+       valid_lft forever preferred_lft forever
+[root@compute2 ~]# ip netns exec qrouter-0580788c-c919-447c-aea1-87d415aa173a tc qdisc show dev rfp-0580788c-c
+qdisc htb 801e: root refcnt 2 r2q 10 default 0 direct_packets_stat 5
+qdisc ingress ffff: parent ffff:fff1 ----------------
+[root@compute2 ~]# ip netns exec qrouter-0580788c-c919-447c-aea1-87d415aa173a tc -s -d -p filter show dev rfp-0580788c-c parent 801e:
+filter protocol ip pref 1 u32
+filter protocol ip pref 1 u32 fh 800: ht divisor 1
+filter protocol ip pref 1 u32 fh 800::800 order 2048 key ht 800 bkt 0 flowid :1  (rule hit 0 success 0)
+  match IP src 172.16.6.161/32 (success 0 )
+ police 0x68 rate 1000Kbit burst 1Mb mtu 64Kb action drop overhead 0b
+ref 1 bind 1
+
+ Sent 0 bytes 0 pkts (dropped 0, overlimits 0)
+[root@compute2 ~]# ip netns exec qrouter-0580788c-c919-447c-aea1-87d415aa173a tc -s -d -p filter show dev rfp-0580788c-c parent ffff:
+filter protocol ip pref 1 u32
+filter protocol ip pref 1 u32 fh 800: ht divisor 1
+filter protocol ip pref 1 u32 fh 800::800 order 2048 key ht 800 bkt 0 flowid :1  (rule hit 0 success 0)
+  match IP dst 172.16.6.161/32 (success 0 )
+ police 0x67 rate 1000Kbit burst 1Mb mtu 64Kb action drop overhead 0b
+ref 1 bind 1
+
+ Sent 0 bytes 0 pkts (dropped 0, overlimits 0)
+</pre></div>
+</div>
+</div>
+<div class="section" id="ipv6-impact">
+<h3>IPv6 Impact<a class="headerlink" href="#ipv6-impact" title="Permalink to this headline">¶</a></h3>
+<p>IPv6 will not be considerd in this spec, rate limit for IP v6 may need some
+other solutions.</p>
+</div>
+<div class="section" id="data-model-impact">
+<h3>Data Model Impact<a class="headerlink" href="#data-model-impact" title="Permalink to this headline">¶</a></h3>
+<p>New properties will be added to floating IP model or extra attributes table,
+one optional name is <tt class="docutils literal"><span class="pre">rate_limit</span></tt>. And may aslo for <tt class="docutils literal"><span class="pre">routerports</span></tt> table.</p>
+</div>
+<div class="section" id="rest-api-impact">
+<h3>REST API Impact<a class="headerlink" href="#rest-api-impact" title="Permalink to this headline">¶</a></h3>
+<p>New API extention for floating IP <tt class="docutils literal"><span class="pre">rate_limit</span></tt> creating/updating API. System
+administrator may need to set a default value of the <tt class="docutils literal"><span class="pre">rate_limit</span></tt> when user
+does not supply it.</p>
+<p><tt class="docutils literal"><span class="pre">ext-gw-mode</span></tt> extention will also be influenced to add a new param for
+set_router_gateway API.</p>
+</div>
+</div>
+<div class="section" id="implementation">
+<h2>Implementation<a class="headerlink" href="#implementation" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="work-items">
+<h3>Work Items<a class="headerlink" href="#work-items" title="Permalink to this headline">¶</a></h3>
+<ul class="simple">
+<li>Modify model tables and API resources.</li>
+<li>New TC command wrapper for layer 3 IPs rate limit.</li>
+<li>L3 agent side tc rule installation.</li>
+<li>CLI support.</li>
+<li>Testing.</li>
+<li>Documentation.</li>
+</ul>
+</div>
+</div>
+<div class="section" id="dependencies">
+<h2>Dependencies<a class="headerlink" href="#dependencies" title="Permalink to this headline">¶</a></h2>
+<p>None</p>
+</div>
+<div class="section" id="testing">
+<h2>Testing<a class="headerlink" href="#testing" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="functionality">
+<h3>Functionality<a class="headerlink" href="#functionality" title="Permalink to this headline">¶</a></h3>
+<p>The bandwidth of layer 3 IPs should be restricted properly.
+Use some commands, such as <cite>scp</cite>, to test the bandwith of ingress and egress.</p>
+</div>
+<div class="section" id="upgrading">
+<h3>Upgrading<a class="headerlink" href="#upgrading" title="Permalink to this headline">¶</a></h3>
+<p>Upgrading test may need to see all the layer 3 IPs are limited to the default
+bandwidth.</p>
+</div>
+</div>
+<div class="section" id="references">
+<h2>References<a class="headerlink" href="#references" title="Permalink to this headline">¶</a></h2>
+<table class="docutils footnote" frame="void" id="id3" rules="none">
+<colgroup><col class="label" /><col /></colgroup>
+<tbody valign="top">
+<tr><td class="label"><a class="fn-backref" href="#id1">[1]</a></td><td><a class="reference external" href="http://www.tldp.org/HOWTO/Traffic-Control-HOWTO">Linux Traffic Control</a></td></tr>
+</tbody>
+</table>
+<table class="docutils footnote" frame="void" id="id4" rules="none">
+<colgroup><col class="label" /><col /></colgroup>
+<tbody valign="top">
+<tr><td class="label"><a class="fn-backref" href="#id2">[2]</a></td><td><a class="reference external" href="http://www.linuxjournal.com/article/7562">Linux HTB Queuing</a></td></tr>
+</tbody>
+</table>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+<div class="sphinxsidebar">
+    <div class="sphinxsidebarwrapper">
+            <h3><a href="../../index.html">Table Of Contents</a></h3>
+            <ul>
+<li><a class="reference internal" href="#">Layer 3 IPs rate limit</a><ul>
+<li><a class="reference internal" href="#problem-description">Problem Description</a></li>
+<li><a class="reference internal" href="#proposed-change">Proposed Change</a><ul>
+<li><a class="reference internal" href="#overview">Overview</a></li>
+<li><a class="reference internal" href="#solution-proposed">Solution Proposed</a><ul>
+<li><a class="reference internal" href="#floating-ip">Floating IP</a></li>
+<li><a class="reference internal" href="#router-gateway-ip">Router Gateway IP</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#example-l3-agent-side-tc-rules">Example L3 agent side TC rules</a></li>
+<li><a class="reference internal" href="#ipv6-impact">IPv6 Impact</a></li>
+<li><a class="reference internal" href="#data-model-impact">Data Model Impact</a></li>
+<li><a class="reference internal" href="#rest-api-impact">REST API Impact</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#implementation">Implementation</a><ul>
+<li><a class="reference internal" href="#work-items">Work Items</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#dependencies">Dependencies</a></li>
+<li><a class="reference internal" href="#testing">Testing</a><ul>
+<li><a class="reference internal" href="#functionality">Functionality</a></li>
+<li><a class="reference internal" href="#upgrading">Upgrading</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#references">References</a></li>
+</ul>
+</li>
+</ul>
+
+            <h4>Previous topic</h4>
+            <p class="topless"><a href="../../index.html"
+                                  title="previous chapter">Blogs</a></p>
+            <h4>Next topic</h4>
+            <p class="topless"><a href="openstack.html"
+                                  title="next chapter">What is OpenStack</a></p>
+            <h3>This Page</h3>
+            <ul class="this-page-menu">
+              <li><a href="../../sources/pages/CloudComputing/layer-3-rate-limit.txt"
+                     rel="nofollow">Show Source</a></li>
+            </ul>
+          <div id="searchbox" style="display: none">
+            <h3>Quick search</h3>
+              <form class="search" action="../../search.html" method="get">
+                <input type="text" name="q" size="18" />
+                <input type="submit" value="Go" />
+                <input type="hidden" name="check_keywords" value="yes" />
+                <input type="hidden" name="area" value="default" />
+              </form>
+              <p class="searchtip" style="font-size: 90%">
+              Enter search terms or a module, class or function name.
+              </p>
+          </div>
+          <script type="text/javascript">$('#searchbox').show(0);</script>
+    </div>
+</div>
+
+      <div class="clearer"></div>
+    </div>
+    <div class="related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="openstack.html" title="What is OpenStack"
+             accesskey="N">next</a></li>
+        <li class="right" >
+          <a href="../../index.html" title="Blogs"
+             accesskey="P">previous</a> |</li>
+        <li><a href="../../index.html">LIU Yulong&#39;s Cloud Blog</a> &raquo;</li> 
+      </ul>
+    </div>
+
+    <div class="footer">
+        &copy; Copyright 2016, LIU Yulong.
+      Last updated on &#39;Wed Sep 21 16:00:21 2016, commit 2409b0c&#39;.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 1.2.3.
+    </div>
+<script type="text/javascript">
+var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+</script>
+<script type="text/javascript">
+try {
+var pageTracker = _gat._getTracker("UA-17511903-1");
+pageTracker._setCookiePath("/developer/gotostack.github.io");
+pageTracker._trackPageview();
+} catch(err) {}</script>
+
+  </body>
+</html>
