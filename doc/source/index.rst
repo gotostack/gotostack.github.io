@@ -16,7 +16,7 @@ Cloud Computing
    :glob:
    :maxdepth: 1
 
-   pages/Cloud/*
+   pages/CloudComputing/*
 
 
 Linux
